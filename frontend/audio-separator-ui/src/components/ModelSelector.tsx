@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Download, Check, Loader2, ChevronDown, Star, Trash2, Mic, Music, Sparkles, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Download, Check, Loader2, Star, Trash2, Mic, Music, Sparkles, Search, X, CheckCircle2, HardDrive } from 'lucide-react';
 import type { ModelInfo, SeparationMode } from '../types';
 
 interface ModelSelectorProps {
@@ -14,10 +13,24 @@ interface ModelSelectorProps {
   downloadingModels: Set<string>;
 }
 
-const CAT: Record<string, { label: string; icon: typeof Mic; color: string }> = {
-  vocal: { label: 'Vocal Separation', icon: Mic, color: '#ec4899' },
+const CAT_CONFIG: Record<string, { label: string; icon: typeof Mic; color: string }> = {
+  vocal: { label: 'Vocals', icon: Mic, color: '#ec4899' },
   multi_stem: { label: 'Multi-Stem', icon: Music, color: '#3b82f6' },
-  specialized: { label: 'Specialized (Denoise/DeReverb)', icon: Sparkles, color: '#f59e0b' },
+  specialized: { label: 'Denoise & FX', icon: Sparkles, color: '#f59e0b' },
+};
+
+const STEM_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  vocals: { bg: 'rgba(236,72,153,0.15)', text: '#f472b6', border: 'rgba(236,72,153,0.3)' },
+  instrumental: { bg: 'rgba(99,102,241,0.15)', text: '#818cf8', border: 'rgba(99,102,241,0.3)' },
+  other: { bg: 'rgba(139,92,246,0.15)', text: '#a78bfa', border: 'rgba(139,92,246,0.3)' },
+  drums: { bg: 'rgba(249,115,22,0.15)', text: '#fb923c', border: 'rgba(249,115,22,0.3)' },
+  bass: { bg: 'rgba(6,182,212,0.15)', text: '#22d3ee', border: 'rgba(6,182,212,0.3)' },
+  guitar: { bg: 'rgba(34,197,94,0.15)', text: '#4ade80', border: 'rgba(34,197,94,0.3)' },
+  piano: { bg: 'rgba(99,102,241,0.15)', text: '#818cf8', border: 'rgba(99,102,241,0.3)' },
+  clean: { bg: 'rgba(6,182,212,0.15)', text: '#22d3ee', border: 'rgba(6,182,212,0.3)' },
+  noise: { bg: 'rgba(113,113,122,0.15)', text: '#a1a1aa', border: 'rgba(113,113,122,0.3)' },
+  dry: { bg: 'rgba(59,130,246,0.15)', text: '#60a5fa', border: 'rgba(59,130,246,0.3)' },
+  reverb: { bg: 'rgba(168,85,247,0.15)', text: '#c084fc', border: 'rgba(168,85,247,0.3)' },
 };
 
 export function ModelSelector({
@@ -30,345 +43,359 @@ export function ModelSelector({
   onDeleteModel,
   downloadingModels,
 }: ModelSelectorProps) {
-  const [expanded, setExpanded] = useState<string | null>('vocal');
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'downloaded' | 'vocal' | 'multi_stem' | 'specialized'>('all');
 
-  const filteredCategories = useMemo(() => {
-    const result: Record<string, string[]> = {};
-    const query = search.trim().toLowerCase();
-
+  const modelList = useMemo(() => {
+    const list: (ModelInfo & { category: string })[] = [];
     Object.entries(categories).forEach(([cat, keys]) => {
-      if (activeTab !== 'all' && activeTab !== 'downloaded' && activeTab !== cat) return;
-
-      const filteredKeys = keys.filter((key) => {
+      keys.forEach((key) => {
         const m = models[key];
-        if (!m) return false;
-        if (activeTab === 'downloaded' && !m.is_downloaded) return false;
-        if (!query) return true;
-        return (
-          m.name.toLowerCase().includes(query) ||
-          m.key.toLowerCase().includes(query) ||
-          m.description.toLowerCase().includes(query) ||
-          m.stems.some((s) => s.toLowerCase().includes(query))
-        );
+        if (m) {
+          list.push({ ...m, category: cat });
+        }
       });
-
-      if (filteredKeys.length > 0) {
-        result[cat] = filteredKeys;
-      }
     });
+    return list;
+  }, [categories, models]);
 
-    return result;
-  }, [categories, models, search, activeTab]);
+  const filteredModels = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return modelList.filter((m) => {
+      // Category filter
+      if (activeTab === 'downloaded' && !m.is_downloaded) return false;
+      if (activeTab !== 'all' && activeTab !== 'downloaded' && m.category !== activeTab) return false;
+
+      // Query filter
+      if (!query) return true;
+      return (
+        m.name.toLowerCase().includes(query) ||
+        m.key.toLowerCase().includes(query) ||
+        m.description.toLowerCase().includes(query) ||
+        m.stems.some((s) => s.toLowerCase().includes(query)) ||
+        (m.model_type || '').toLowerCase().includes(query)
+      );
+    });
+  }, [modelList, search, activeTab]);
+
+  const downloadedCount = useMemo(() => {
+    return Object.values(models).filter((m) => m.is_downloaded).length;
+  }, [models]);
 
   return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 style={{ fontSize: 'var(--f-lg)', fontWeight: 700, color: 'var(--text-1)' }}>
-            {mode === 'ensemble' ? 'Select Ensemble Models' : 'Separation Model'}
-          </h2>
-          <p style={{ fontSize: 'var(--f-xs)', color: 'var(--text-2)', marginTop: '2px' }}>
-            {mode === 'ensemble'
-              ? 'Choose 2 or more models to blend algorithms'
-              : 'Choose the best architecture for your audio'}
-          </p>
-        </div>
-
-        {selectedModels.length > 0 && (
-          <span
-            className="flex items-center gap-1.5"
+    <div className="flex flex-col h-full space-y-3.5">
+      {/* Search Bar + Filters */}
+      <div className="flex flex-col gap-2.5 shrink-0">
+        {/* Search Input Row */}
+        <div className="flex items-center gap-2">
+          <div
+            className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl border transition-all"
             style={{
-              fontSize: 'var(--f-xs)',
-              fontWeight: 600,
-              padding: '4px 10px',
-              borderRadius: 'var(--r-full)',
-              background: 'var(--accent-light)',
-              color: 'var(--accent-hover)',
+              background: 'var(--bg-secondary)',
+              borderColor: search ? 'var(--accent)' : 'var(--border-1)',
             }}
           >
-            {selectedModels.length} selected
-          </span>
+            <Search className="w-4 h-4 text-zinc-400 shrink-0" />
+            <input
+              type="text"
+              placeholder="Search by model name, architecture, stems (e.g. Roformer, vocals)..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-transparent border-none outline-none text-xs w-full text-zinc-100 placeholder-zinc-500"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="text-zinc-400 hover:text-zinc-200 transition-colors p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {selectedModels.length > 0 && (
+            <div className="px-3 py-1.5 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-semibold flex items-center gap-1.5 shrink-0">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{selectedModels.length} selected</span>
+            </div>
+          )}
+        </div>
+
+        {/* Category Pills Bar */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setActiveTab('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border ${
+              activeTab === 'all'
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            All Models ({modelList.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('downloaded')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border flex items-center gap-1.5 ${
+              activeTab === 'downloaded'
+                ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Downloaded ({downloadedCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('vocal')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border flex items-center gap-1.5 ${
+              activeTab === 'vocal'
+                ? 'bg-pink-600 text-white border-pink-500 shadow-sm'
+                : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            <Mic className="w-3 h-3 text-pink-400" />
+            Vocals
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('multi_stem')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border flex items-center gap-1.5 ${
+              activeTab === 'multi_stem'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
+                : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            <Music className="w-3 h-3 text-blue-400" />
+            4-Stem Band
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('specialized')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border flex items-center gap-1.5 ${
+              activeTab === 'specialized'
+                ? 'bg-amber-600 text-white border-amber-500 shadow-sm'
+                : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            <Sparkles className="w-3 h-3 text-amber-400" />
+            Denoise & FX
+          </button>
+        </div>
+      </div>
+
+      {/* Model Cards Grid */}
+      <div className="flex-1 overflow-y-auto pr-1">
+        {filteredModels.length === 0 ? (
+          <div className="h-48 rounded-xl border border-dashed border-zinc-800 flex flex-col items-center justify-center text-center p-6 text-zinc-400">
+            <Search className="w-8 h-8 text-zinc-600 mb-2" />
+            <p className="text-sm font-medium text-zinc-300">No models match your filter</p>
+            <p className="text-xs text-zinc-500 mt-1">Try changing category or clearing your search term</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                setActiveTab('all');
+              }}
+              className="mt-3 px-3 py-1.5 text-xs rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+            >
+              Reset Filters
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+            {filteredModels.map((model) => {
+              const isSelected = selectedModels.includes(model.key);
+              const isDownloading = downloadingModels.has(model.key);
+
+              return (
+                <ModelCard
+                  key={model.key}
+                  model={model}
+                  selected={isSelected}
+                  downloading={isDownloading}
+                  mode={mode}
+                  onToggle={() => onToggleModel(model.key)}
+                  onDownload={() => onDownloadModel(model.key)}
+                  onDelete={() => onDeleteModel(model.key)}
+                />
+              );
+            })}
+          </div>
         )}
       </div>
-
-      {/* Search & Filter Bar */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div
-          className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg"
-          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-1)' }}
-        >
-          <Search className="w-3.5 h-3.5 text-zinc-400" />
-          <input
-            type="text"
-            placeholder="Search models by name, stem, architecture..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="bg-transparent border-none outline-none text-xs w-full text-zinc-200 placeholder-zinc-500"
-          />
-        </div>
-
-        {/* Tab Filters */}
-        <div
-          className="inline-flex p-1 rounded-lg shrink-0 gap-1 overflow-x-auto"
-          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-1)' }}
-        >
-          {(['all', 'downloaded', 'vocal', 'multi_stem'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className="px-2.5 py-1 text-xs rounded font-medium transition-all"
-              style={{
-                background: activeTab === tab ? 'var(--accent)' : 'transparent',
-                color: activeTab === tab ? 'white' : 'var(--text-3)',
-              }}
-            >
-              {tab === 'all'
-                ? 'All'
-                : tab === 'downloaded'
-                ? 'Ready'
-                : tab === 'vocal'
-                ? 'Vocals'
-                : 'Multi-Stem'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Categories */}
-      {Object.entries(filteredCategories).length === 0 ? (
-        <div className="card text-center py-8" style={{ color: 'var(--text-3)', fontSize: 'var(--f-sm)' }}>
-          No models matching your search
-        </div>
-      ) : (
-        Object.entries(filteredCategories).map(([cat, keys]) => {
-          const cfg = CAT[cat] || { label: cat, icon: Music, color: '#71717a' };
-          const Icon = cfg.icon;
-          const isOpen = expanded === cat || Boolean(search);
-
-          return (
-            <div key={cat} className="card overflow-hidden">
-              {/* Category header */}
-              <button
-                onClick={() => setExpanded(isOpen ? null : cat)}
-                className="w-full flex items-center gap-3 transition-colors"
-                style={{ padding: 'var(--sp-md)', background: 'transparent' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--bg-hover)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ background: `${cfg.color}18` }}
-                >
-                  <Icon className="w-4 h-4" style={{ color: cfg.color }} />
-                </div>
-                <div className="flex-1 text-left">
-                  <span style={{ fontSize: 'var(--f-sm)', fontWeight: 600, color: 'var(--text-1)' }}>
-                    {cfg.label}
-                  </span>
-                  <span style={{ fontSize: 'var(--f-xs)', color: 'var(--text-3)', marginLeft: '6px' }}>
-                    ({keys.length})
-                  </span>
-                </div>
-                <ChevronDown
-                  className="w-4 h-4 transition-transform duration-200"
-                  style={{ color: 'var(--text-3)', transform: isOpen ? 'rotate(180deg)' : 'none' }}
-                />
-              </button>
-
-              {/* Model items */}
-              <AnimatePresence>
-                {isOpen && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden"
-                  >
-                    <div style={{ padding: '0 var(--sp-sm) var(--sp-sm)' }} className="space-y-1">
-                      {keys.map((key) => {
-                        const m = models[key];
-                        if (!m) return null;
-                        return (
-                          <ModelItem
-                            key={key}
-                            model={m}
-                            selected={selectedModels.includes(key)}
-                            downloading={downloadingModels.has(key)}
-                            onToggle={() => onToggleModel(key)}
-                            onDownload={() => onDownloadModel(key)}
-                            onDelete={() => onDeleteModel(key)}
-                          />
-                        );
-                      })}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          );
-        })
-      )}
     </div>
   );
 }
 
-function ModelItem({
+function ModelCard({
   model,
   selected,
   downloading,
+  mode,
   onToggle,
   onDownload,
   onDelete,
 }: {
-  model: ModelInfo;
+  model: ModelInfo & { category: string };
   selected: boolean;
   downloading: boolean;
+  mode: SeparationMode;
   onToggle: () => void;
   onDownload: () => void;
   onDelete: () => void;
 }) {
-  const bestSDR = Object.entries(model.sdr_metrics).sort(([, a], [, b]) => b - a)[0];
+  const cat = CAT_CONFIG[model.category] || { label: model.category, icon: Music, color: '#818cf8' };
+  const bestSDR = Object.entries(model.sdr_metrics || {}).sort(([, a], [, b]) => b - a)[0];
 
   return (
     <div
-      className={`flex items-center gap-3 rounded-lg cursor-pointer group transition-all ${
-        selected ? 'card-active' : ''
-      }`}
-      style={{
-        padding: 'var(--sp-sm) var(--sp-md)',
-        background: selected ? undefined : 'transparent',
-        border: selected ? undefined : '1px solid transparent',
-      }}
       onClick={onToggle}
-      onMouseEnter={(e) => {
-        if (!selected) e.currentTarget.style.background = 'var(--bg-hover)';
-      }}
-      onMouseLeave={(e) => {
-        if (!selected) e.currentTarget.style.background = 'transparent';
-      }}
+      className={`group relative rounded-xl border p-3.5 flex flex-col justify-between cursor-pointer transition-all duration-200 select-none ${
+        selected
+          ? 'bg-gradient-to-b from-indigo-950/40 to-zinc-900 border-indigo-500 ring-1 ring-indigo-500 shadow-md shadow-indigo-500/10'
+          : 'bg-zinc-900/60 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
+      }`}
     >
-      {/* Checkbox */}
-      <div
-        className="w-[18px] h-[18px] rounded-full border-2 flex items-center justify-center shrink-0 transition-all"
-        style={{
-          borderColor: selected ? 'var(--accent)' : 'var(--border-2)',
-          background: selected ? 'var(--accent)' : 'transparent',
-        }}
-      >
-        {selected && <Check className="w-3 h-3 text-white" />}
-      </div>
+      {/* Top Header */}
+      <div>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          {/* Architecture & Category Badge */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+              {model.model_type || 'neural'}
+            </span>
+            <span
+              className="text-[10px] font-medium px-2 py-0.5 rounded-md border"
+              style={{
+                backgroundColor: `${cat.color}15`,
+                color: cat.color,
+                borderColor: `${cat.color}30`,
+              }}
+            >
+              {cat.label}
+            </span>
+            {model.is_downloaded ? (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Ready
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                Auto-download
+              </span>
+            )}
+          </div>
 
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="truncate" style={{ fontSize: 'var(--f-sm)', fontWeight: 600, color: 'var(--text-1)' }}>
-            {model.name}
-          </span>
-          {!model.is_downloaded ? (
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 500,
-                padding: '1px 6px',
-                borderRadius: 'var(--r-full)',
-                background: 'rgba(251,191,36,0.12)',
-                color: 'var(--c-warning)',
-              }}
-            >
-              auto-download on run
-            </span>
-          ) : (
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 500,
-                padding: '1px 6px',
-                borderRadius: 'var(--r-full)',
-                background: 'var(--c-success-light)',
-                color: 'var(--c-success)',
-              }}
-            >
-              downloaded
-            </span>
-          )}
+          {/* Selection indicator */}
+          <div
+            className={`w-5 h-5 rounded-${mode === 'single' ? 'full' : 'md'} flex items-center justify-center shrink-0 border transition-all ${
+              selected
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'border-zinc-700 group-hover:border-zinc-600 bg-zinc-800/50'
+            }`}
+          >
+            {selected && (
+              mode === 'ensemble' ? (
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-white" />
+              )
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 mt-1 flex-wrap">
-          {model.stems.map((s) => (
-            <span
-              key={s}
-              style={{
-                fontSize: '11px',
-                fontWeight: 500,
-                padding: '1px 6px',
-                borderRadius: 'var(--r-sm)',
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text-2)',
-                textTransform: 'capitalize',
-              }}
-            >
-              {s}
-            </span>
-          ))}
+        {/* Title */}
+        <h4 className="text-sm font-bold text-zinc-100 group-hover:text-white transition-colors line-clamp-1">
+          {model.name}
+        </h4>
+
+        {/* Description */}
+        <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2 leading-relaxed">
+          {model.description || 'High performance source separation model'}
+        </p>
+
+        {/* Stems Badges */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+          {model.stems.map((stem) => {
+            const stemStyle = STEM_COLORS[stem.toLowerCase()] || {
+              bg: 'rgba(113,113,122,0.15)',
+              text: '#a1a1aa',
+              border: 'rgba(113,113,122,0.3)',
+            };
+            return (
+              <span
+                key={stem}
+                className="text-[10px] font-medium px-2 py-0.5 rounded-md border capitalize"
+                style={{
+                  backgroundColor: stemStyle.bg,
+                  color: stemStyle.text,
+                  borderColor: stemStyle.border,
+                }}
+              >
+                {stem}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Card Footer: Metrics & Actions */}
+      <div className="pt-3 mt-3 border-t border-zinc-800/80 flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-2.5 font-mono text-zinc-400">
           {bestSDR && (
-            <span
-              className="flex items-center gap-0.5"
-              style={{ fontSize: '11px', fontWeight: 600, color: '#fbbf24' }}
-              title="Signal-to-Distortion Ratio (SDR dB)"
-            >
+            <span className="flex items-center gap-1 text-amber-400 font-semibold" title="Signal-to-Distortion Ratio">
               <Star className="w-3 h-3 fill-current" />
-              SDR {bestSDR[1].toFixed(2)} dB
+              {bestSDR[1].toFixed(1)} dB
             </span>
           )}
           {model.size_mb > 0 && (
-            <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
+            <span className="flex items-center gap-1 text-zinc-500">
+              <HardDrive className="w-3 h-3" />
               {model.size_mb >= 1000 ? `${(model.size_mb / 1000).toFixed(1)} GB` : `${model.size_mb} MB`}
             </span>
           )}
         </div>
-      </div>
 
-      {/* Actions */}
-      {!model.is_downloaded ? (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDownload();
-          }}
-          disabled={downloading}
-          className="btn btn-ghost btn-icon btn-sm"
-          title="Download model now"
-          style={{ color: 'var(--accent)' }}
-        >
-          {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-        </button>
-      ) : (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="btn btn-ghost btn-icon btn-sm opacity-0 group-hover:opacity-100 transition-opacity"
-          title="Delete downloaded model"
-          style={{ color: 'var(--text-3)' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = 'var(--c-error)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--text-3)';
-          }}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      )}
+        {/* Download / Delete Action */}
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {!model.is_downloaded ? (
+            <button
+              type="button"
+              onClick={onDownload}
+              disabled={downloading}
+              className="px-2 py-1 rounded-md bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/30 flex items-center gap-1 text-[10px] font-medium transition-all"
+            >
+              {downloading ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Downloading...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3 h-3" />
+                  <span>Download</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="p-1 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+              title="Delete offline weights"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

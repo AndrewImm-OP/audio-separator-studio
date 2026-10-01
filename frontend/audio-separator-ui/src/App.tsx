@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
-import { Layers, AudioLines, Zap } from 'lucide-react';
+import {
+  Layers,
+  AudioLines,
+  Zap,
+  Sliders,
+  Cpu,
+  Volume2,
+  ExternalLink,
+} from 'lucide-react';
 
 import { Header } from './components/Header';
 import { FileUpload } from './components/FileUpload';
@@ -30,9 +38,17 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState<any>(null);
   const { connected: wsConnected, lastJobUpdate } = useWebSocket();
 
+  // Audio parameters
+  const [outputFormat, setOutputFormat] = useState('wav_16');
+  const [overlap, setOverlap] = useState(0.25);
+  const [lowVram, setLowVram] = useState(false);
+
   // Backend status (Electron)
   useEffect(() => {
-    if (!window.electronAPI) { setBackendReady(true); return; }
+    if (!window.electronAPI) {
+      setBackendReady(true);
+      return;
+    }
 
     // Listen for push updates from main process
     window.electronAPI.onBackendStatus((s: any) => {
@@ -40,19 +56,22 @@ export default function App() {
       if (s.running) setBackendReady(true);
     });
 
-    // Also actively poll — solves race condition where main process
-    // sent 'running: true' before this listener was registered
+    // Also actively poll in case listener registered after process spawn
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     const pollBackendStatus = async () => {
       try {
         const status = await window.electronAPI!.getBackendStatus();
         if (status.running) {
           setBackendReady(true);
-          if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
-    // Poll immediately, then every 1s until ready
     pollBackendStatus();
     pollInterval = setInterval(pollBackendStatus, 1000);
 
@@ -73,259 +92,525 @@ export default function App() {
           api.getEnsembleMethods().catch(() => ({ methods: [] })),
         ]);
         if (h) setHealth(h);
-        setModels(m.models); setCategories(m.categories); setEnsembleMethods(e.methods);
-      } catch (err) { console.error('Load failed:', err); }
+        setModels(m.models);
+        setCategories(m.categories);
+        setEnsembleMethods(e.methods);
+
+        // Pre-select first available vocal model if none selected
+        const vocalCategory = (m.categories as Record<string, string[]>)?.vocal;
+        if (vocalCategory && vocalCategory.length > 0) {
+          setSelectedModels([vocalCategory[0]]);
+        }
+      } catch (err) {
+        console.error('Initial data load failed:', err);
+      }
     })();
   }, [backendReady]);
 
-  // WS updates
+  // WebSocket job status updates
   useEffect(() => {
     if (lastJobUpdate && currentJob && lastJobUpdate.id === currentJob.id) {
       setCurrentJob(lastJobUpdate);
-      if (lastJobUpdate.status === 'completed') toast.success('Separation complete!');
-      else if (lastJobUpdate.status === 'error') toast.error(`Error: ${lastJobUpdate.message}`);
+      if (lastJobUpdate.status === 'completed') {
+        toast.success('Audio separation complete!');
+      } else if (lastJobUpdate.status === 'error') {
+        toast.error(`Separation error: ${lastJobUpdate.message}`);
+      }
     }
   }, [lastJobUpdate, currentJob]);
 
-  const handleToggleModel = useCallback((key: string) => {
-    setSelectedModels((p) => mode === 'single' ? (p.includes(key) ? [] : [key]) : (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));
-  }, [mode]);
+  const handleToggleModel = useCallback(
+    (key: string) => {
+      setSelectedModels((prev) => {
+        if (mode === 'single') {
+          return prev.includes(key) ? [] : [key];
+        } else {
+          return prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+        }
+      });
+    },
+    [mode],
+  );
 
-  const handleDownloadModel = useCallback(async (key: string) => {
-    setDownloadingModels((p) => new Set(p).add(key));
-    try { await api.downloadModel(key); const d = await api.getModels(); setModels(d.models); toast.success(`Downloaded: ${models[key]?.name || key}`); }
-    catch (e: any) { toast.error(`Download failed: ${e.message}`); }
-    finally { setDownloadingModels((p) => { const n = new Set(p); n.delete(key); return n; }); }
-  }, [models]);
+  const handleDownloadModel = useCallback(
+    async (key: string) => {
+      setDownloadingModels((p) => new Set(p).add(key));
+      try {
+        await api.downloadModel(key);
+        const d = await api.getModels();
+        setModels(d.models);
+        toast.success(`Downloaded: ${models[key]?.name || key}`);
+      } catch (e: any) {
+        toast.error(`Download failed: ${e.message}`);
+      } finally {
+        setDownloadingModels((p) => {
+          const n = new Set(p);
+          n.delete(key);
+          return n;
+        });
+      }
+    },
+    [models],
+  );
 
   const handleDeleteModel = useCallback(async (key: string) => {
-    try { await api.deleteModel(key); const d = await api.getModels(); setModels(d.models); setSelectedModels((p) => p.filter((k) => k !== key)); toast.success('Model deleted'); }
-    catch (e: any) { toast.error(`Delete failed: ${e.message}`); }
+    try {
+      await api.deleteModel(key);
+      const d = await api.getModels();
+      setModels(d.models);
+      setSelectedModels((p) => p.filter((k) => k !== key));
+      toast.success('Model deleted from local cache');
+    } catch (e: any) {
+      toast.error(`Delete failed: ${e.message}`);
+    }
   }, []);
 
-  const [outputFormat, setOutputFormat] = useState('wav_16');
-  const [overlap, setOverlap] = useState(0.25);
-  const [lowVram, setLowVram] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const handleWeightChange = useCallback((k: string, w: number) => setModelWeights((p) => ({ ...p, [k]: w })), []);
+  const handleWeightChange = useCallback((k: string, w: number) => {
+    setModelWeights((p) => ({ ...p, [k]: w }));
+  }, []);
 
   const handleCancelJob = useCallback(async () => {
     if (currentJob?.id) {
       try {
         await api.cancelJob(currentJob.id);
         toast.success('Separation cancelled');
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     setCurrentJob(null);
   }, [currentJob]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!file) { toast.error('Select an audio file'); return; }
-    if (selectedModels.length === 0) { toast.error('Select a model'); return; }
-    if (mode === 'ensemble' && selectedModels.length < 2) { toast.error('Ensemble needs 2+ models'); return; }
-    setIsSubmitting(true);
-    try {
-      const r = mode === 'single'
-        ? await api.separateAudio(file, selectedModels[0], overlap, 485100, outputFormat, lowVram)
-        : await api.ensembleSeparate(file, selectedModels, ensembleMethod, selectedModels.map((k) => modelWeights[k] ?? 1.0));
-      setCurrentJob({ id: r.job_id, status: 'queued', input_file: file.name, progress: 0, message: 'Starting...', output_files: {} });
-      if (!wsConnected) pollJob(r.job_id);
-    } catch (e: any) { toast.error(`Failed: ${e.message}`); }
-    finally { setIsSubmitting(false); }
-  }, [file, selectedModels, mode, ensembleMethod, modelWeights, wsConnected, overlap, outputFormat, lowVram]);
-
   const pollJob = useCallback(async (id: string) => {
-    const go = async () => { try { const j = await api.getJobStatus(id); setCurrentJob(j); if (j.status !== 'completed' && j.status !== 'error') setTimeout(go, 2000); } catch { setTimeout(go, 3000); } };
+    const go = async () => {
+      try {
+        const j = await api.getJobStatus(id);
+        setCurrentJob(j);
+        if (j.status !== 'completed' && j.status !== 'error') {
+          setTimeout(go, 1500);
+        }
+      } catch {
+        setTimeout(go, 2500);
+      }
+    };
     go();
   }, []);
 
-  const handleReset = useCallback(() => { setCurrentJob(null); setFile(null); }, []);
+  const handleSubmit = useCallback(async () => {
+    if (!file) {
+      toast.error('Please load an audio file first');
+      return;
+    }
+    if (selectedModels.length === 0) {
+      toast.error('Please select at least one separation model');
+      return;
+    }
+    if (mode === 'ensemble' && selectedModels.length < 2) {
+      toast.error('Ensemble blending requires at least 2 models');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const r =
+        mode === 'single'
+          ? await api.separateAudio(file, selectedModels[0], overlap, 485100, outputFormat, lowVram)
+          : await api.ensembleSeparate(
+              file,
+              selectedModels,
+              ensembleMethod,
+              selectedModels.map((k) => modelWeights[k] ?? 1.0),
+            );
+
+      setCurrentJob({
+        id: r.job_id,
+        status: 'queued',
+        input_file: file.name,
+        progress: 0,
+        message: 'Initializing AI inference pipeline...',
+        output_files: {},
+      });
+
+      if (!wsConnected) {
+        pollJob(r.job_id);
+      }
+    } catch (e: any) {
+      toast.error(`Failed to start job: ${e.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [file, selectedModels, mode, ensembleMethod, modelWeights, wsConnected, overlap, outputFormat, lowVram, pollJob]);
+
+  const handleReset = useCallback(() => {
+    setCurrentJob(null);
+  }, []);
 
   const isProcessing = currentJob && !['completed', 'error'].includes(currentJob.status);
   const isComplete = currentJob?.status === 'completed';
   const modelNames = Object.fromEntries(Object.entries(models).map(([k, v]) => [k, v.name]));
-  const canSubmit = file && selectedModels.length > 0 && (mode !== 'ensemble' || selectedModels.length >= 2) && !isSubmitting;
 
-  // Splash
+  const canSubmit =
+    Boolean(file) &&
+    selectedModels.length > 0 &&
+    (mode !== 'ensemble' || selectedModels.length >= 2) &&
+    !isSubmitting;
+
+  const activeModel = mode === 'single' && selectedModels.length > 0 ? models[selectedModels[0]] : null;
+
+  // Initial Electron splash
   if (!backendReady && window.electronAPI) {
     return (
-      <div className="h-screen flex flex-col">
+      <div className="h-screen w-screen flex flex-col bg-[#0b0d14] text-zinc-100 overflow-hidden">
         <Header health={null} wsConnected={false} backendReady={false} />
-        <div className="flex-1"><BackendSplash attempt={backendStatus?.attempt || 0} maxRetries={backendStatus?.maxRetries || 30} error={backendStatus?.error} /></div>
+        <div className="flex-1">
+          <BackendSplash
+            attempt={backendStatus?.attempt || 0}
+            maxRetries={backendStatus?.maxRetries || 30}
+            error={backendStatus?.error}
+          />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
+    <div className="h-screen w-screen flex flex-col bg-[#0b0d14] text-zinc-100 select-none overflow-hidden">
       <Toaster
         position="bottom-right"
         toastOptions={{
-          duration: 3000,
+          duration: 3500,
           style: {
-            background: 'var(--bg-elevated)', color: 'var(--text-1)',
-            border: '1px solid var(--border-1)', fontSize: '13px',
-            borderRadius: 'var(--r-md)', padding: '10px 14px',
-            boxShadow: 'var(--shadow-lg)',
+            background: '#161822',
+            color: '#e4e4e7',
+            border: '1px solid #27293d',
+            fontSize: '12px',
+            borderRadius: '10px',
+            padding: '10px 14px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
           },
         }}
       />
 
+      {/* Top Application Header */}
       <Header health={health} wsConnected={wsConnected} backendReady={backendReady} />
 
-      <main className="flex-1 overflow-y-auto" style={{ padding: 'var(--sp-lg)', scrollBehavior: 'smooth' }}>
-        <div className="max-w-7xl mx-auto w-full">
-          {isComplete ? (
+      {/* Main Studio Workstation */}
+      <main className="flex-1 flex overflow-hidden">
+        {isComplete ? (
+          <div className="flex-1 p-5 overflow-y-auto">
             <ResultsView job={currentJob!} onReset={handleReset} />
-          ) : isProcessing ? (
+          </div>
+        ) : isProcessing ? (
+          <div className="flex-1 p-5 flex items-center justify-center overflow-y-auto">
             <ProcessingView job={currentJob!} onReset={handleReset} onCancel={handleCancelJob} />
-          ) : (
-            <div className="space-y-6 anim-in">
-              {/* Mode toggle */}
-              <div className="flex justify-center">
-                <div className="inline-flex p-1 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-1)' }}>
-                  <button
-                    onClick={() => { setMode('single'); setSelectedModels((p) => p.slice(0, 1)); }}
-                    className="btn btn-sm"
-                    style={{
-                      background: mode === 'single' ? 'var(--accent)' : 'transparent',
-                      color: mode === 'single' ? 'white' : 'var(--text-2)',
-                      boxShadow: mode === 'single' ? 'var(--shadow-md)' : 'none',
-                      borderRadius: 'var(--r-md)',
-                    }}
-                  >
-                    <AudioLines className="w-3.5 h-3.5" /> Single Model
-                  </button>
-                  <button
-                    onClick={() => setMode('ensemble')}
-                    className="btn btn-sm"
-                    style={{
-                      background: mode === 'ensemble' ? 'var(--accent)' : 'transparent',
-                      color: mode === 'ensemble' ? 'white' : 'var(--text-2)',
-                      boxShadow: mode === 'ensemble' ? 'var(--shadow-md)' : 'none',
-                      borderRadius: 'var(--r-md)',
-                    }}
-                  >
-                    <Layers className="w-3.5 h-3.5" /> Ensemble
-                  </button>
-                </div>
-              </div>
-
-              {/* Upload */}
-              <FileUpload file={file} onFileSelect={setFile} />
-
-              {/* Model + ensemble side-by-side */}
-              <div className={`grid gap-4 ${mode === 'ensemble' ? 'grid-cols-1 lg:grid-cols-[1fr_minmax(300px,380px)]' : 'grid-cols-1'}`}>
-                <ModelSelector
-                  models={models} categories={categories} selectedModels={selectedModels} mode={mode}
-                  onToggleModel={handleToggleModel} onDownloadModel={handleDownloadModel}
-                  onDeleteModel={handleDeleteModel} downloadingModels={downloadingModels}
-                />
-                {mode === 'ensemble' && (
-                  <EnsembleConfig
-                    methods={ensembleMethods} selectedMethod={ensembleMethod}
-                    onMethodChange={setEnsembleMethod} modelWeights={modelWeights}
-                    selectedModels={selectedModels} modelNames={modelNames} onWeightChange={handleWeightChange}
-                  />
-                )}
-              </div>
-
-              {/* Advanced Settings Bar */}
-              <div className="card" style={{ padding: 'var(--sp-md)' }}>
-                <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowAdvanced(!showAdvanced)}>
-                  <span style={{ fontSize: 'var(--f-sm)', fontWeight: 600, color: 'var(--text-1)' }}>
-                    ⚙️ Advanced Processing Settings
-                  </span>
-                  <span style={{ fontSize: 'var(--f-xs)', color: 'var(--accent)' }}>
-                    {showAdvanced ? 'Hide' : 'Show'}
-                  </span>
+          </div>
+        ) : (
+          <div className="flex-1 flex w-full h-full overflow-hidden">
+            {/* ══════════════════════════════════════════════════════════
+                LEFT PANEL: TRACK & PIPELINE CONTROL DECK (380px)
+                ══════════════════════════════════════════════════════════ */}
+            <aside className="w-[380px] shrink-0 border-r border-zinc-800/80 bg-zinc-950/70 p-4 flex flex-col justify-between overflow-y-auto gap-4">
+              <div className="space-y-4">
+                {/* 1. Track Source Dropzone */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                      1. Audio Source
+                    </span>
+                    {file && (
+                      <span className="text-[10px] text-emerald-400 font-mono font-medium">
+                        ✓ Loaded
+                      </span>
+                    )}
+                  </div>
+                  <FileUpload file={file} onFileSelect={setFile} />
                 </div>
 
-                {showAdvanced && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-[var(--border-1)]">
-                    {/* Output Format */}
-                    <div>
-                      <label style={{ fontSize: 'var(--f-xs)', color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>
-                        Audio Format
-                      </label>
-                      <select
-                        value={outputFormat}
-                        onChange={(e) => setOutputFormat(e.target.value)}
-                        className="w-full text-xs p-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-1)] text-zinc-200 outline-none"
-                      >
-                        <option value="wav_16">WAV 16-bit PCM (Standard CD)</option>
-                        <option value="wav_24">WAV 24-bit PCM (Studio HD)</option>
-                        <option value="wav_float">WAV 32-bit Float</option>
-                        <option value="flac">FLAC (Lossless Compressed)</option>
-                      </select>
-                    </div>
+                {/* 2. Separation Mode Segmented Switch */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                      2. Separation Engine
+                    </span>
+                  </div>
 
-                    {/* Overlap */}
-                    <div>
-                      <label style={{ fontSize: 'var(--f-xs)', color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>
-                        Chunk Overlap
-                      </label>
-                      <select
-                        value={overlap}
-                        onChange={(e) => setOverlap(parseFloat(e.target.value))}
-                        className="w-full text-xs p-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-1)] text-zinc-200 outline-none"
-                      >
-                        <option value={0.1}>10% (Fast)</option>
-                        <option value={0.25}>25% (Balanced, recommended)</option>
-                        <option value={0.5}>50% (Highest quality)</option>
-                      </select>
-                    </div>
+                  <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('single');
+                        setSelectedModels((p) => p.slice(0, 1));
+                      }}
+                      className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                        mode === 'single'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <AudioLines className="w-3.5 h-3.5" />
+                      <span>Single Model</span>
+                    </button>
 
-                    {/* Low VRAM */}
-                    <div>
-                      <label style={{ fontSize: 'var(--f-xs)', color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>
-                        VRAM Optimization
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer mt-1 text-xs text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={lowVram}
-                          onChange={(e) => setLowVram(e.target.checked)}
-                          className="rounded border-[var(--border-1)] text-[var(--accent)]"
-                        />
-                        <span>Low VRAM Mode (≤ 4GB GPU)</span>
-                      </label>
+                    <button
+                      type="button"
+                      onClick={() => setMode('ensemble')}
+                      className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                        mode === 'ensemble'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Ensemble Blend</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Output Format & Studio DSP Settings */}
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-3">
+                  <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider block">
+                    3. Output Parameters
+                  </span>
+
+                  {/* Format */}
+                  <div>
+                    <label className="text-[11px] text-zinc-400 font-medium block mb-1">
+                      Audio Format
+                    </label>
+                    <select
+                      value={outputFormat}
+                      onChange={(e) => setOutputFormat(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-zinc-800 border border-zinc-700/80 text-zinc-200 outline-none focus:border-indigo-500 transition-colors"
+                    >
+                      <option value="wav_16">WAV 16-bit PCM (Standard CD)</option>
+                      <option value="wav_24">WAV 24-bit PCM (Studio Master HD)</option>
+                      <option value="wav_float">WAV 32-bit Float (DAW Mixing)</option>
+                      <option value="flac">FLAC Lossless (Compressed)</option>
+                    </select>
+                  </div>
+
+                  {/* Overlap */}
+                  <div>
+                    <label className="text-[11px] text-zinc-400 font-medium block mb-1">
+                      Chunk Overlap
+                    </label>
+                    <select
+                      value={overlap}
+                      onChange={(e) => setOverlap(parseFloat(e.target.value))}
+                      className="w-full text-xs p-2 rounded-lg bg-zinc-800 border border-zinc-700/80 text-zinc-200 outline-none focus:border-indigo-500 transition-colors"
+                    >
+                      <option value={0.1}>10% — Fast Inference Preview</option>
+                      <option value={0.25}>25% — Balanced Quality (Recommended)</option>
+                      <option value={0.5}>50% — Maximum Seamless Stitching</option>
+                    </select>
+                  </div>
+
+                  {/* Low VRAM Mode */}
+                  <div className="pt-2 border-t border-zinc-800">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
+                          <Cpu className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Low VRAM Mode</span>
+                        </div>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                          Optimized for GPUs with ≤ 4GB memory
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={lowVram}
+                        onChange={(e) => setLowVram(e.target.checked)}
+                        className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* 4. Active Selection Summary */}
+                {activeModel && (
+                  <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
+                        Active Target
+                      </span>
+                      <span className="text-[10px] font-mono text-zinc-400">
+                        {activeModel.stems.length} stems
+                      </span>
+                    </div>
+                    <div className="font-bold text-zinc-100">{activeModel.name}</div>
+                    <div className="text-[11px] text-zinc-400 capitalize">
+                      Extracts: {activeModel.stems.join(' + ')}
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Submit */}
-              <div className="flex justify-center pt-2 pb-6">
+              {/* Bottom Action Trigger */}
+              <div className="pt-2">
                 <button
+                  type="button"
                   onClick={handleSubmit}
                   disabled={!canSubmit}
-                  className="btn btn-primary btn-lg"
-                  style={{
-                    gap: 'var(--sp-sm)',
-                    boxShadow: canSubmit ? '0 4px 20px var(--accent-glow)' : 'none',
-                  }}
+                  className={`w-full py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg ${
+                    canSubmit
+                      ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-600/25 active:scale-[0.99] cursor-pointer'
+                      : 'bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed'
+                  }`}
                 >
                   {isSubmitting ? (
-                    <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" style={{ animation: 'spin 0.6s linear infinite' }} /> Starting...</>
+                    <>
+                      <span
+                        className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                        style={{ animation: 'spin 0.6s linear infinite' }}
+                      />
+                      <span>Starting Engine...</span>
+                    </>
                   ) : (
-                    <><Zap className="w-4 h-4" /> {mode === 'ensemble' ? `Ensemble (${selectedModels.length})` : 'Separate Audio'}</>
+                    <>
+                      <Zap className="w-4 h-4 fill-current" />
+                      <span>
+                        {mode === 'ensemble'
+                          ? `Run Ensemble (${selectedModels.length} Models)`
+                          : 'Separate Audio'}
+                      </span>
+                    </>
                   )}
                 </button>
+
+                {!canSubmit && (
+                  <p className="text-[10px] text-zinc-500 text-center mt-2">
+                    {!file
+                      ? 'Please load an audio file above'
+                      : selectedModels.length === 0
+                      ? 'Select a model from the catalog'
+                      : mode === 'ensemble' && selectedModels.length < 2
+                      ? 'Select at least 2 models for ensemble blend'
+                      : ''}
+                  </p>
+                )}
               </div>
-            </div>
-          )}
-        </div>
+            </aside>
+
+            {/* ══════════════════════════════════════════════════════════
+                RIGHT PANEL: MODEL BROWSER & ENSEMBLE WORKSPACE
+                ══════════════════════════════════════════════════════════ */}
+            <section className="flex-1 flex flex-col p-4 overflow-hidden bg-zinc-900/30">
+              {mode === 'single' ? (
+                <div className="flex-1 flex flex-col h-full overflow-hidden">
+                  <div className="flex items-center justify-between mb-3 shrink-0">
+                    <div>
+                      <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                        AI Model Catalog
+                      </h2>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Select a specialized neural network tailored for your audio task
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-hidden">
+                    <ModelSelector
+                      models={models}
+                      categories={categories}
+                      selectedModels={selectedModels}
+                      mode={mode}
+                      onToggleModel={handleToggleModel}
+                      onDownloadModel={handleDownloadModel}
+                      onDeleteModel={handleDeleteModel}
+                      downloadingModels={downloadingModels}
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* Ensemble Mode: Split Catalog & Matrix */
+                <div className="flex-1 flex gap-4 h-full overflow-hidden">
+                  {/* Left: Model Checklist */}
+                  <div className="w-[55%] flex flex-col h-full overflow-hidden">
+                    <div className="mb-3 shrink-0">
+                      <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                        1. Select Ensemble Contributors
+                      </h2>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Choose 2 or more models with matching stems to blend
+                      </p>
+                    </div>
+
+                    <div className="flex-1 overflow-hidden">
+                      <ModelSelector
+                        models={models}
+                        categories={categories}
+                        selectedModels={selectedModels}
+                        mode={mode}
+                        onToggleModel={handleToggleModel}
+                        onDownloadModel={handleDownloadModel}
+                        onDeleteModel={handleDeleteModel}
+                        downloadingModels={downloadingModels}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right: Ensemble Algorithm Matrix */}
+                  <div className="w-[45%] flex flex-col h-full overflow-y-auto pr-1">
+                    <div className="mb-3 shrink-0">
+                      <h2 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                        2. Blending Configuration
+                      </h2>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Configure recombination algorithm and model weights
+                      </p>
+                    </div>
+
+                    <EnsembleConfig
+                      methods={ensembleMethods}
+                      selectedMethod={ensembleMethod}
+                      onMethodChange={setEnsembleMethod}
+                      modelWeights={modelWeights}
+                      selectedModels={selectedModels}
+                      modelNames={modelNames}
+                      onWeightChange={handleWeightChange}
+                    />
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer style={{ borderTop: '1px solid var(--border-1)', padding: '8px var(--sp-lg)', background: 'var(--bg-secondary)' }}>
-        <div className="max-w-7xl mx-auto w-full flex items-center justify-between" style={{ fontSize: 'var(--f-xs)', color: 'var(--text-3)' }}>
-          <span>Audio Separator v1.0</span>
-          <span>Powered by <a href="https://github.com/ZFTurbo/Music-Source-Separation-Training" target="_blank" rel="noopener noreferrer">MSST</a></span>
+      {/* Bottom Status Bar */}
+      <footer className="h-7 shrink-0 border-t border-zinc-800/80 bg-zinc-950 px-4 flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5 text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            Audio Separator Studio v1.0
+          </span>
+          <span className="text-zinc-600">|</span>
+          <span>Engine: MSST + PyTorch cu124</span>
+          {health?.cuda_device && (
+            <>
+              <span className="text-zinc-600">|</span>
+              <span className="text-indigo-400">{health.cuda_device}</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4">
+          <span>44,100 Hz • Stereo Processing</span>
+          <a
+            href="https://github.com/AndrewImm-OP/audio-separator-studio"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-zinc-400 hover:text-indigo-400 transition-colors"
+          >
+            <span>GitHub</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
         </div>
       </footer>
     </div>
   );
 }
+
