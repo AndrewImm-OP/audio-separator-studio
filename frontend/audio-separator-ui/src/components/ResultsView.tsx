@@ -28,6 +28,8 @@ interface ResultsViewProps {
 
 const STEM_CONFIGS: Record<string, { icon: typeof Music; color: string; label: string }> = {
   vocals: { icon: Mic, color: '#ec4899', label: 'Vocals' },
+  lead_vocals: { icon: Mic, color: '#ec4899', label: 'Lead Vocals' },
+  backing_vocals: { icon: Waves, color: '#a855f7', label: 'Backing Vocals' },
   drums: { icon: Drum, color: '#f97316', label: 'Drums' },
   bass: { icon: Guitar, color: '#06b6d4', label: 'Bass' },
   guitar: { icon: Guitar, color: '#22c55e', label: 'Guitar' },

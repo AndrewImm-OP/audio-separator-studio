@@ -82,6 +82,28 @@ VOCAL_MODELS: dict[str, ModelInfo] = {
         description="BS-PolarFormer vocal model. SDR 11.00 on Multisong.",
         size_mb=400,
     ),
+    "bs_roformer_karaoke": ModelInfo(
+        key="bs_roformer_karaoke",
+        name="BS-Roformer Karaoke (Lead & Backing)",
+        model_type="bs_roformer",
+        stems=["lead_vocals", "backing_vocals"],
+        config_url="https://huggingface.co/becruily/bs-roformer-karaoke/raw/main/config_karaoke_frazer_becruily.yaml",
+        checkpoint_url="https://huggingface.co/becruily/bs-roformer-karaoke/resolve/main/bs_roformer_karaoke_frazer_becruily.ckpt",
+        sdr_metrics={"lead_vocals": 11.20},
+        description="Top SOTA модель для разделения Лид-вокала (Lead) и Бэк-вокала (Backing/Harmonies).",
+        size_mb=204,
+    ),
+    "mel_band_roformer_karaoke": ModelInfo(
+        key="mel_band_roformer_karaoke",
+        name="MelBand-Roformer Karaoke (Lead & Backing)",
+        model_type="mel_band_roformer",
+        stems=["lead_vocals", "backing_vocals"],
+        config_url="https://huggingface.co/becruily/mel-band-roformer-karaoke/raw/main/config_karaoke_becruily.yaml",
+        checkpoint_url="https://huggingface.co/becruily/mel-band-roformer-karaoke/resolve/main/mel_band_roformer_karaoke_becruily.ckpt",
+        sdr_metrics={"lead_vocals": 10.95},
+        description="MelBand-Roformer модель для глубокого извлечения бэков и эхо.",
+        size_mb=600,
+    ),
 }
 
 # ─── Multi-stem models ────────────────────────────────────────────────────────

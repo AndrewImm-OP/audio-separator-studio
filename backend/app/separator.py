@@ -317,6 +317,19 @@ class SeparationEngine:
             model, config, audio, sr, overlap, chunk_size, progress_callback, low_vram
         )
 
+        # If model is a karaoke separation model, map target to lead_vocals and other to backing_vocals
+        if "karaoke" in model_key.lower():
+            remapped = {}
+            for sname, saudio in stems.items():
+                s_low = sname.lower()
+                if s_low in ["vocals", "lead", "target"]:
+                    remapped["lead_vocals"] = saudio
+                elif s_low in ["instrumental", "other", "backing"]:
+                    remapped["backing_vocals"] = saudio
+                else:
+                    remapped[sname] = saudio
+            stems = remapped
+
         # Save stems
         input_name = Path(audio_path).stem
         output_paths = {}
